@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+pymupdf
+pymupdf4llm
+reportlab
+python-multipart
+pytest
+pydantic
+qdrant-client
+pyyaml
+huggingface_hub
+httpx

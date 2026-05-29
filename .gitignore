@@ -1,0 +1,31 @@
+# Environments
+.env
+.venv/
+env/
+venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+dist/
+*.egg-info/
+.pytest_cache/
+
+# Node
+node_modules/
+.npm/
+
+# Data and Runtime
+data/uploads/
+data/extracted/
+data/cache/
+data/documents.json
+data/qdrant/
+parsed.json
+
+# IDE
+.idea/
+.vscode/
+*.swp
+.DS_Store

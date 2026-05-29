@@ -1,0 +1,16 @@
+vector_store:
+  provider: qdrant
+  qdrant:
+    url: ""
+    api_key: ""
+    dense_collection: "paper_chunks_dense"
+    sparse_collection: "paper_chunks_sparse"
+    dense_size: 1024
+embeddings:
+  hf_token: ""
+  model: "BAAI/bge-m3"
+  timeout: 60
+rerank:
+  hf_token: ""
+  model: "BAAI/bge-reranker-v2-m3"
+  timeout: 60
