@@ -281,6 +281,5 @@ Add your license here (e.g. MIT) before public release.
 
 ## Author
 
-**Your Name** — [GitHub](https://github.com/yourusername) · [LinkedIn](https://linkedin.com/in/yourprofile) · your.email@example.com
+**Asif Khan** — [LinkedIn]([https://linkedin.com/in/yourprofile](https://linkedin.com/in/asif-khan-0ba826240)) · tanoli3715@gmail.com
 
-> Replace the author block with your details before sharing with recruiters.
