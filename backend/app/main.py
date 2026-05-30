@@ -290,7 +290,10 @@ def delete_document(doc_id: str):
 
 
 @app.delete("/documents", response_model=DeleteDocumentsResponse)
-def delete_documents(doc_ids: list[str] | None = None, clear_all: bool = False):
+def delete_documents(
+    doc_ids: list[str] | None = Query(default=None),
+    clear_all: bool = Query(default=False),
+):
     vector_db = get_vector_db()
     if clear_all:
         ids = _collect_doc_ids()
@@ -298,7 +301,10 @@ def delete_documents(doc_ids: list[str] | None = None, clear_all: bool = False):
         delete_all_document_artifacts(ids)
         return DeleteDocumentsResponse(deleted=ids, status="deleted")
 
-    ids = doc_ids or _collect_doc_ids()
+    if not doc_ids:
+        raise HTTPException(status_code=400, detail="Provide doc_ids query parameters or set clear_all=true")
+
+    ids = list(dict.fromkeys(doc_ids))
     for doc_id in ids:
         vector_db.delete_document(doc_id)
         delete_document_artifacts(doc_id)
