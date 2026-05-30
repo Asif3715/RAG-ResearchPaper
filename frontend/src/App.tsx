@@ -222,13 +222,7 @@ export default function App() {
         content: assistantText || 'No response received.',
         sources: latestSources,
       }
-      setMessages((prev) => {
-        const idx = prev.length
-        if (latestSources?.length) {
-          setExpandedCitations((exp) => ({ ...exp, [idx]: true }))
-        }
-        return [...prev, assistantMessage]
-      })
+      setMessages((prev) => [...prev, assistantMessage])
       setStreamingAnswer('')
     } catch (err: unknown) {
       const message = formatApiError(err instanceof Error ? err.message : String(err))

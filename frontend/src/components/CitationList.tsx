@@ -20,7 +20,7 @@ export function CitationList({ sources, expanded, onToggle, onCopy }: Props) {
       {expanded && (
         <div className="citation-list">
           {sources.map((src, idx) => (
-            <details key={`${src.title}-${idx}`} className="citation-item" open={idx === 0}>
+            <details key={`${src.title}-${idx}`} className="citation-item">
               <summary>
                 <span className="citation-index">[{idx + 1}]</span>
                 <span className="citation-title">{src.title}</span>
