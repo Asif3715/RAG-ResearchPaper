@@ -26,10 +26,16 @@ class RetrievedChunk:
 
 
 class RetrievalPipeline:
-    def __init__(self, config_path: str | None = None):
-        self.embedding_client = EmbeddingClient(config_path=config_path)
-        self.rerank_client = RerankClient(config_path=config_path)
-        self.vector_db = QdrantVectorDB(config_path=config_path)
+    def __init__(
+        self,
+        config_path: str | None = None,
+        embedding_client: EmbeddingClient | None = None,
+        rerank_client: RerankClient | None = None,
+        vector_db: QdrantVectorDB | None = None,
+    ):
+        self.embedding_client = embedding_client or EmbeddingClient(config_path=config_path)
+        self.rerank_client = rerank_client or RerankClient(config_path=config_path)
+        self.vector_db = vector_db or QdrantVectorDB(config_path=config_path)
 
     def retrieve(self, query: str, top_k_initial: int = 30, top_k_final: int = 5, doc_ids: list[str] | None = None, rerank: bool = True) -> list[RetrievedChunk]:
         query_vector = self.embedding_client.embed_text(query)

@@ -21,6 +21,7 @@ data/uploads/
 data/extracted/
 data/cache/
 data/documents.json
+data/ingestion_status.json
 data/qdrant/
 parsed.json
 

@@ -20,7 +20,12 @@ def test_query_schema_rejects_empty_query():
     assert response.status_code == 422
 
 
-def test_documents_endpoint_returns_list():
+def test_documents_endpoint_returns_list(monkeypatch):
+    class FakeVectorDB:
+        def list_documents(self):
+            return []
+
+    monkeypatch.setattr("backend.app.main.get_vector_db", lambda: FakeVectorDB())
     response = client.get("/documents")
     assert response.status_code == 200
     assert isinstance(response.json(), list)

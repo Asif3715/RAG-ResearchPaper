@@ -1,4 +1,4 @@
-from backend.app.services.storage.qdrant_client import rrf_fuse
+from backend.app.services.retrieval.rrf_score import rrf_fuse
 
 
 def test_rrf_fusion_orders_results():

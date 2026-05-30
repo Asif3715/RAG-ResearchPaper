@@ -14,6 +14,19 @@ const EXAMPLES = [
 type Message = { role: 'user' | 'assistant'; content: string; sources?: QuerySource[] }
 type Toast = { id: number; message: string; type: 'error' | 'success' }
 
+function formatApiError(text: string): string {
+  try {
+    const body = JSON.parse(text) as { detail?: string | Array<{ msg?: string }> }
+    if (typeof body.detail === 'string') return body.detail
+    if (Array.isArray(body.detail)) {
+      return body.detail.map((item) => item.msg || JSON.stringify(item)).join('; ')
+    }
+  } catch {
+    // not JSON
+  }
+  return text.trim() || 'Failed to get answer'
+}
+
 export default function App() {
   const client = useMemo(() => new ApiClient(DEFAULT_BACKEND_URL), [])
   const [docs, setDocs] = useState<DocumentItem[]>([])
@@ -189,9 +202,10 @@ export default function App() {
       setActiveSources(latestSources.length ? latestSources : null)
     } catch (err: any) {
       console.error(err)
-      addToast(err.message || 'Failed to get answer')
+      const message = formatApiError(String(err?.message || ''))
+      addToast(message)
       if (!assistantText) {
-        setMessages((prev) => [...prev, { role: 'assistant', content: 'Sorry, I encountered an error answering your question.' }])
+        setMessages((prev) => [...prev, { role: 'assistant', content: message }])
       }
     } finally {
       setLoading(false)
@@ -260,7 +274,7 @@ export default function App() {
               </div>
               <div className={`pipeline-step ${activeUploads.length ? 'active' : 'done'}`}>
                 <span className="material-symbols-outlined">sync</span>
-                <div><strong>{activeUploads.length ? 'Embedding...' : 'Chunking complete'}</strong><span>{activeUploads.length ? activeUploads[0]?.detail || 'Working through ingestion' : `${doneUploads.reduce((acc, item) => acc + Number(item.timeline?.length || 0), 0)} chunks created`}</span></div>
+                <div><strong>{activeUploads.length ? 'Embedding...' : 'Chunking complete'}</strong><span>{activeUploads.length ? activeUploads[0]?.detail || 'Working through ingestion' : `${docs.reduce((acc, doc) => acc + Number(doc.metadata?.chunks ?? 0), 0)} chunks indexed`}</span></div>
               </div>
             </div>
           </section>

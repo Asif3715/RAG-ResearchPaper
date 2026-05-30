@@ -30,4 +30,8 @@ def get_groq_generator() -> GroqGenerator:
 
 @lru_cache(maxsize=1)
 def get_retrieval_pipeline() -> RetrievalPipeline:
-    return RetrievalPipeline()
+    return RetrievalPipeline(
+        embedding_client=get_embedding_client(),
+        rerank_client=get_rerank_client(),
+        vector_db=get_vector_db(),
+    )

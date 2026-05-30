@@ -24,7 +24,8 @@ from backend.app.models import (
 )
 from backend.app.services.embeddings.client import normalize_text
 from backend.app.services.indexing.ingest import ingest_parsed_document
-from backend.app.services.indexing.registry import delete_document_record, list_documents, rename_document_record, upsert_document
+from backend.app.services.indexing.cleanup import delete_all_document_artifacts, delete_document_artifacts
+from backend.app.services.indexing.registry import list_documents, rename_document_record, upsert_document
 from backend.app.services.indexing.status import fail_status, get_status, init_status, list_statuses
 from backend.app.services.pdf.parser import parse_pdf_bytes
 
@@ -44,7 +45,7 @@ app = FastAPI(title="RAG Analyst API", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -75,16 +76,95 @@ def _rate_limit_query() -> None:
 
 
 def _ingest_background(parsed: dict) -> None:
+    doc_id = parsed.get("doc_id", "unknown")
     try:
-        ingest_parsed_document(parsed)
+        result = ingest_parsed_document(parsed)
         upsert_document({
-            "doc_id": parsed.get("doc_id"),
+            "doc_id": doc_id,
             "title": parsed.get("title"),
             "status": "done",
-            "metadata": {"chunks": len(parsed.get("chunks", []))},
+            "metadata": {"chunks": result.get("ingested", len(parsed.get("chunks", [])))},
         })
     except Exception as exc:
-        fail_status(parsed.get("doc_id", "unknown"), f"{type(exc).__name__}: {exc}")
+        fail_status(doc_id, f"{type(exc).__name__}: {exc}")
+        upsert_document({
+            "doc_id": doc_id,
+            "title": parsed.get("title"),
+            "status": "error",
+            "metadata": {"error": str(exc)},
+        })
+
+
+def _safe_list_qdrant_documents() -> list[dict]:
+    try:
+        return get_vector_db().list_documents()
+    except Exception as exc:
+        logger.warning("Qdrant unavailable for document listing: %s", exc)
+        return []
+
+
+def _merged_document_sources() -> list[dict]:
+    return _safe_list_qdrant_documents() + list_documents() + list_statuses()
+
+
+def _merge_metadata(current: dict | None, incoming: dict | None) -> dict:
+    base = dict(current or {})
+    new = dict(incoming or {})
+    base_chunks = int(base.get("chunks") or 0)
+    new_chunks = int(new.get("chunks") or 0)
+    if new_chunks or base_chunks:
+        base["chunks"] = max(base_chunks, new_chunks)
+    for key, value in new.items():
+        if key == "chunks":
+            continue
+        if key == "error" and base.get("chunks"):
+            continue
+        if value is not None and value != "":
+            base[key] = value
+    return base
+
+
+def _merge_document_items(items: list[dict]) -> list[DocumentItem]:
+    merged: dict[str, dict] = {}
+    for item in items:
+        doc_id = item.get("doc_id")
+        if not doc_id:
+            continue
+        current = merged.setdefault(
+            doc_id,
+            {
+                "doc_id": doc_id,
+                "title": item.get("title"),
+                "status": item.get("status") or item.get("state"),
+                "metadata": {},
+            },
+        )
+        if item.get("title") and (not current.get("title") or current.get("title") == doc_id):
+            current["title"] = item.get("title")
+        incoming_status = item.get("status") or item.get("state")
+        if incoming_status:
+            if incoming_status != "error" or current.get("status") in (None, "error"):
+                current["status"] = incoming_status
+        if isinstance(item.get("metadata"), dict):
+            current["metadata"] = _merge_metadata(current.get("metadata"), item.get("metadata"))
+    return [DocumentItem(**item) for item in merged.values()]
+
+
+def _retrieval_error_detail(exc: Exception) -> str:
+    text = f"{type(exc).__name__}: {exc}"
+    if "Connection refused" in text or "ConnectError" in text:
+        return (
+            "Cannot connect to Qdrant. Check QDRANT_URL and QDRANT_API_KEY in .env "
+            "(for Qdrant Cloud use your cluster HTTPS URL and API key from the cloud console)."
+        )
+    if "Not found" in text and "collection" in text.lower():
+        return "Qdrant collections are missing. Re-upload a PDF or restart the API after Qdrant is running."
+    return f"Retrieval failed: {text}"
+
+
+def _collect_doc_ids() -> list[str]:
+    items = _merged_document_sources()
+    return list({str(item["doc_id"]) for item in items if item.get("doc_id")})
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -177,46 +257,27 @@ def query_documents(payload: QueryRequest):
 
 @app.get("/documents", response_model=list[DocumentItem])
 def documents():
-    qdrant_items = get_vector_db().list_documents()
-    items = qdrant_items + list_documents() + list_statuses()
-    merged: dict[str, dict] = {}
-    for item in items:
-        doc_id = item.get("doc_id")
-        if not doc_id:
-            continue
-        current = merged.setdefault(doc_id, {"doc_id": doc_id, "title": item.get("title"), "status": item.get("status") or item.get("state"), "metadata": item.get("metadata", {})})
-        if item.get("title") and (not current.get("title") or current.get("title") == doc_id):
-            current["title"] = item.get("title")
-        if item.get("status") or item.get("state"):
-            current["status"] = item.get("status") or item.get("state")
-        if isinstance(item.get("metadata"), dict):
-            current["metadata"] = item.get("metadata", {})
-    return [DocumentItem(**item) for item in merged.values()]
+    return _merge_document_items(_merged_document_sources())
 
 
 @app.get("/documents/{doc_id}", response_model=DocumentItem)
 def document(doc_id: str):
-    for item in get_vector_db().list_documents() + list_documents() + list_statuses():
-        if item.get("doc_id") == doc_id:
-            return DocumentItem(
-                doc_id=doc_id,
-                title=item.get("title"),
-                status=item.get("status") or item.get("state"),
-                metadata=item.get("metadata", {}) if isinstance(item.get("metadata"), dict) else {},
-            )
+    for item in _merge_document_items(_merged_document_sources()):
+        if item.doc_id == doc_id:
+            return item
     raise HTTPException(status_code=404, detail="Document not found")
 
 
 @app.patch("/documents/{doc_id}", response_model=DocumentItem)
 def rename_document(doc_id: str, payload: RenameDocumentRequest):
     rename_document_record(doc_id, payload.title)
-    for item in get_vector_db().list_documents() + list_documents() + list_statuses():
-        if item.get("doc_id") == doc_id:
+    for item in _merge_document_items(_merged_document_sources()):
+        if item.doc_id == doc_id:
             return DocumentItem(
                 doc_id=doc_id,
                 title=payload.title,
-                status=item.get("status") or item.get("state"),
-                metadata=item.get("metadata", {}) if isinstance(item.get("metadata"), dict) else {},
+                status=item.status,
+                metadata=item.metadata,
             )
     return DocumentItem(doc_id=doc_id, title=payload.title, status="indexed", metadata={})
 
@@ -224,7 +285,7 @@ def rename_document(doc_id: str, payload: RenameDocumentRequest):
 @app.delete("/documents/{doc_id}")
 def delete_document(doc_id: str):
     get_vector_db().delete_document(doc_id)
-    delete_document_record(doc_id)
+    delete_document_artifacts(doc_id)
     return {"doc_id": doc_id, "status": "deleted"}
 
 
@@ -232,22 +293,20 @@ def delete_document(doc_id: str):
 def delete_documents(doc_ids: list[str] | None = None, clear_all: bool = False):
     vector_db = get_vector_db()
     if clear_all:
-        ids = [item.get("doc_id") for item in list_documents() if item.get("doc_id")]
+        ids = _collect_doc_ids()
         vector_db.delete_all_documents()
-        for doc_id in ids:
-            delete_document_record(doc_id)
+        delete_all_document_artifacts(ids)
         return DeleteDocumentsResponse(deleted=ids, status="deleted")
 
-    ids = doc_ids or [item.get("doc_id") for item in list_documents() if item.get("doc_id")]
+    ids = doc_ids or _collect_doc_ids()
     for doc_id in ids:
         vector_db.delete_document(doc_id)
-        delete_document_record(doc_id)
+        delete_document_artifacts(doc_id)
     return DeleteDocumentsResponse(deleted=ids, status="deleted")
 
 
 @app.get("/answer/stream")
 def answer_documents_stream(q: str, top_k_initial: int = 30, top_k_final: int = 5, rerank: bool = True, search_mode: str = "hybrid", doc_ids: list[str] | None = Query(default=None)):
-    _rate_limit_query()
     generator = get_groq_generator()
     if not generator.api_key:
         raise HTTPException(status_code=500, detail="GROQ_API_KEY is not set")
@@ -263,11 +322,16 @@ def answer_documents_stream(q: str, top_k_initial: int = 30, top_k_final: int = 
             search_mode=search_mode,
         )
     except Exception as e:
-        logger.error(f"Retrieval error: {e}")
-        raise HTTPException(status_code=500, detail=f"Retrieval failed: {e}")
+        logger.error("Retrieval error: %s", e)
+        raise HTTPException(status_code=503, detail=_retrieval_error_detail(e))
 
     def event_stream():
-        yield "data: " + json.dumps({"type": "meta", "final": pipeline_results["final"]}) + "\n\n"
+        yield "data: " + json.dumps({
+            "type": "meta",
+            "query": q,
+            "candidates": pipeline_results.get("candidates", []),
+            "final": pipeline_results["final"],
+        }) + "\n\n"
 
         candidates = pipeline_results["final"]
         if not candidates:

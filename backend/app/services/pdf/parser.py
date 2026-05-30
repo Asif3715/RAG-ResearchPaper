@@ -46,6 +46,13 @@ def load_parsed_output(doc_id: str, cache_dir: Path | None = None) -> dict[str, 
     return json.loads(cache_path.read_text(encoding="utf-8"))
 
 
+def delete_parsed_output(doc_id: str, cache_dir: Path | None = None) -> None:
+    cache_dir = cache_dir or EXTRACTED_DIR
+    cache_path = cache_dir / f"{doc_id}.json"
+    if cache_path.exists():
+        cache_path.unlink()
+
+
 def _clean_text(text: str) -> str:
     cleaned = text
     for pattern in NOISE_PATTERNS:

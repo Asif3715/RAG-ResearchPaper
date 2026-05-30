@@ -33,5 +33,5 @@ def build_sparse_vector(text: str) -> dict[str, Any]:
 
 
 def _term_index(term: str) -> int:
-    digest = hashlib.sha1(term.encode("utf-8")).hexdigest()
-    return int(digest[:8], 16)
+    digest = hashlib.sha256(term.encode("utf-8")).digest()
+    return int.from_bytes(digest[:4], "big") & 0x7FFFFFFF

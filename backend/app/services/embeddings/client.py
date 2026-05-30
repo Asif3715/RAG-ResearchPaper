@@ -157,27 +157,55 @@ class RerankClient:
         self.client = InferenceClient(provider="hf-inference", api_key=self.hf_token, timeout=self.timeout)
 
     def rerank(self, query: str, documents: list[str], top_n: int = 5) -> list[dict[str, Any]]:
-        import concurrent.futures
         import logging
-        ranked = []
-        query_text = normalize_text(query)
-        
-        def _score_doc(idx: int, document: str):
-            pair_text = f"Query: {query_text}\nDocument: {normalize_text(document)}"
-            response = self.session.run(self.client.text_classification, pair_text, model=self.model)
-            return {"index": idx, "score": self._extract_label_score(response), "document": document}
 
-        try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-                futures = [executor.submit(_score_doc, idx, doc) for idx, doc in enumerate(documents)]
-                for future in concurrent.futures.as_completed(futures):
-                    ranked.append(future.result())
-        except Exception as e:
-            logging.error(f"Reranking failed: {e}. Falling back to original order.")
+        if not documents:
             return []
 
-        ranked.sort(key=lambda x: x["score"], reverse=True)
-        return ranked[:top_n]
+        query_text = normalize_text(query)
+        normalized_docs = [normalize_text(doc) for doc in documents]
+
+        try:
+            ranked = self._rerank_via_inference_api(query_text, normalized_docs)
+            if ranked:
+                ranked.sort(key=lambda x: x["score"], reverse=True)
+                return ranked[:top_n]
+        except Exception as exc:
+            logging.warning("Rerank API failed (%s); using positional fallback.", exc)
+
+        return self._positional_fallback(documents, top_n)
+
+    def _rerank_via_inference_api(self, query_text: str, documents: list[str]) -> list[dict[str, Any]]:
+        import concurrent.futures
+
+        def _score_doc(idx: int, document: str) -> dict[str, Any]:
+            if hasattr(self.client, "sentence_similarity"):
+                response = self.session.run(
+                    self.client.sentence_similarity,
+                    query_text,
+                    document,
+                    model=self.model,
+                )
+                score = float(response) if isinstance(response, (int, float)) else self._extract_label_score(response)
+            else:
+                pair_text = f"{query_text} [SEP] {document}"
+                response = self.session.run(self.client.text_classification, pair_text, model=self.model)
+                score = self._extract_label_score(response)
+            return {"index": idx, "score": score, "document": documents[idx]}
+
+        ranked: list[dict[str, Any]] = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+            futures = [executor.submit(_score_doc, idx, doc) for idx, doc in enumerate(documents)]
+            for future in concurrent.futures.as_completed(futures):
+                ranked.append(future.result())
+        return ranked
+
+    @staticmethod
+    def _positional_fallback(documents: list[str], top_n: int) -> list[dict[str, Any]]:
+        return [
+            {"index": idx, "score": 1.0 / (idx + 1), "document": doc}
+            for idx, doc in enumerate(documents)
+        ][:top_n]
 
     @staticmethod
     def _extract_label_score(response: Any) -> float:

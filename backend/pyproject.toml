@@ -18,6 +18,7 @@ dependencies = [
   "python-multipart>=0.0.9",
   "qdrant-client>=1.13",
   "pyyaml>=6.0",
+  "huggingface_hub>=0.26",
 ]
 
 [project.optional-dependencies]

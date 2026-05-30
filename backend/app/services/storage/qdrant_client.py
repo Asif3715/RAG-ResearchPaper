@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as rest
@@ -32,7 +35,12 @@ class QdrantVectorDB:
             sparse_collection=q.get("sparse_collection", "paper_chunks_sparse"),
             dense_size=int(q.get("dense_size", 1024)),
         )
-        self.client = QdrantClient(url=self.settings.url, api_key=self.settings.api_key)
+        self.client = QdrantClient(
+            url=self.settings.url or None,
+            api_key=self.settings.api_key or None,
+            check_compatibility=False,
+        )
+        self._sparse_vector_names: tuple[str, ...] | None = None
 
     def create_collections(self) -> None:
         dense_name = self.settings.dense_collection
@@ -50,7 +58,7 @@ class QdrantVectorDB:
             self.client.create_collection(
                 collection_name=sparse_name,
                 vectors_config={},
-                sparse_vectors_config={"bm25": rest.SparseVectorParams(index=rest.SparseIndexParams())},
+                sparse_vectors_config={"sparse": rest.SparseVectorParams()},
             )
 
         self.client.create_payload_index(
@@ -80,12 +88,18 @@ class QdrantVectorDB:
             collection_name=self.settings.dense_collection,
             points=[rest.PointStruct(id=point_id, vector=dense_vector, payload=payload)],
         )
+        sparse_key = self._primary_sparse_vector_name()
         self.client.upsert(
             collection_name=self.settings.sparse_collection,
             points=[
                 rest.PointStruct(
                     id=point_id,
-                    vector={"bm25": rest.SparseVector(indices=sparse_vector["indices"], values=sparse_vector["values"])},
+                    vector={
+                        sparse_key: rest.SparseVector(
+                            indices=sparse_vector["indices"],
+                            values=sparse_vector["values"],
+                        )
+                    },
                     payload=payload,
                 )
             ],
@@ -94,6 +108,7 @@ class QdrantVectorDB:
     def upsert_batch(self, chunks: list[dict[str, Any]]) -> None:
         dense_points = []
         sparse_points = []
+        sparse_key = self._primary_sparse_vector_name()
         for chunk in chunks:
             point_id = self._point_id(chunk["id"])
             dense_vector = chunk["dense_vector"]
@@ -112,7 +127,12 @@ class QdrantVectorDB:
             sparse_points.append(
                 rest.PointStruct(
                     id=point_id,
-                    vector={"bm25": rest.SparseVector(indices=sparse_vector["indices"], values=sparse_vector["values"])},
+                    vector={
+                        sparse_key: rest.SparseVector(
+                            indices=sparse_vector["indices"],
+                            values=sparse_vector["values"],
+                        )
+                    },
                     payload=payload,
                 )
             )
@@ -135,24 +155,64 @@ class QdrantVectorDB:
         ).points
         return [self._hit_to_dict(hit) for hit in dense_hits]
 
+    def _primary_sparse_vector_name(self) -> str:
+        names = self._sparse_vector_name_candidates()
+        return names[0] if names else "sparse"
+
+    def _sparse_vector_name_candidates(self) -> tuple[str, ...]:
+        if self._sparse_vector_names is not None:
+            return self._sparse_vector_names
+        names: list[str] = []
+        try:
+            info = self.client.get_collection(self.settings.sparse_collection)
+            config = getattr(info, "config", None)
+            params = getattr(config, "params", None) if config else None
+            sparse_cfg = getattr(params, "sparse_vectors", None) if params else None
+            if isinstance(sparse_cfg, dict):
+                names = list(sparse_cfg.keys())
+        except Exception:
+            pass
+        if not names:
+            names = ["sparse", "bm25"]
+        elif "sparse" not in names and "bm25" in names:
+            names = ["bm25", "sparse"]
+        else:
+            names = list(dict.fromkeys([*names, "sparse", "bm25"]))
+        self._sparse_vector_names = tuple(names)
+        return self._sparse_vector_names
+
     def search_sparse(self, sparse_vector: dict[str, Any], top_k: int = 30, doc_ids: list[str] | None = None) -> list[dict[str, Any]]:
         query_filter = None
         if doc_ids:
             query_filter = rest.Filter(must=[rest.FieldCondition(key="doc_id", match=rest.MatchAny(any=doc_ids))])
-        sparse_hits = self.client.query_points(
-            collection_name=self.settings.sparse_collection,
-            query=rest.SparseVector(indices=sparse_vector.get("indices", []), values=sparse_vector.get("values", [])),
-            using="bm25",
-            limit=top_k,
-            with_payload=True,
-            query_filter=query_filter,
-        ).points
-        return [self._hit_to_dict(hit) for hit in sparse_hits]
+        query = rest.SparseVector(indices=sparse_vector.get("indices", []), values=sparse_vector.get("values", []))
+        last_exc: Exception | None = None
+        for using in self._sparse_vector_name_candidates():
+            try:
+                sparse_hits = self.client.query_points(
+                    collection_name=self.settings.sparse_collection,
+                    query=query,
+                    using=using,
+                    limit=top_k,
+                    with_payload=True,
+                    query_filter=query_filter,
+                ).points
+                return [self._hit_to_dict(hit) for hit in sparse_hits]
+            except Exception as exc:
+                last_exc = exc
+                logger.debug("Sparse search with vector name %r failed: %s", using, exc)
+        if last_exc:
+            raise last_exc
+        return []
 
     def hybrid_search(self, query_vector: list[float], sparse_vector: dict[str, Any], top_k: int = 30, doc_ids: list[str] | None = None) -> list[dict[str, Any]]:
         dense_hits = self.search_dense_filtered(query_vector=query_vector, top_k=top_k, doc_ids=doc_ids)
-        sparse_hits = self.search_sparse(sparse_vector=sparse_vector, top_k=top_k, doc_ids=doc_ids)
-        return rrf_fuse([dense_hits, sparse_hits])[:top_k]
+        try:
+            sparse_hits = self.search_sparse(sparse_vector=sparse_vector, top_k=top_k, doc_ids=doc_ids)
+            return rrf_fuse([dense_hits, sparse_hits])[:top_k]
+        except Exception as exc:
+            logger.warning("Sparse leg unavailable, using dense search only: %s", exc)
+            return dense_hits[:top_k]
 
     def delete_document(self, doc_id: str) -> None:
         flt = rest.Filter(must=[rest.FieldCondition(key="doc_id", match=rest.MatchValue(value=doc_id))])
