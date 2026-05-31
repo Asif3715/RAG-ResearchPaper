@@ -435,6 +435,7 @@ button:disabled {
 
 /* Topbar */
 .topbar {
+  position: relative;
   height: 56px;
   border-bottom: 1px solid var(--border);
   display: flex;
@@ -500,6 +501,20 @@ button:disabled {
   align-items: center;
   gap: 10px;
   min-width: 0;
+}
+
+.topbar-center {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.topbar-center > * {
+  pointer-events: auto;
 }
 
 .scope-label {

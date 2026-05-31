@@ -340,7 +340,8 @@ export default function App() {
               <span>Sources</span>
               {docs.length > 0 && <span className="sources-count">{docs.length}</span>}
             </button>
-            <div className="scope-bar">
+          </div>
+          <div className="scope-bar topbar-center">
             {activeChatDocObjects.length ? (
               <>
                 <span className="scope-label">Scoped to</span>
@@ -354,7 +355,6 @@ export default function App() {
             ) : (
               <span className="scope-label muted">All sources</span>
             )}
-            </div>
           </div>
           <div className="topbar-actions">
             {selectMode && selectedDocs.length > 0 && (
