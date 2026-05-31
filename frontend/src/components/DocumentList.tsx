@@ -7,9 +7,12 @@ import {
   Trash2,
   Upload,
   X,
+  ExternalLink,
 } from 'lucide-react'
 import { DocumentItem, IngestionStatusItem } from '../api'
 import { DismissLayer } from './DismissLayer'
+
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL ?? 'http://127.0.0.1:8000'
 
 type Props = {
   open: boolean
@@ -178,6 +181,16 @@ export function DocumentList({
                       <>
                         <DismissLayer onDismiss={() => onOpenMenu(null)} />
                         <div className="doc-menu">
+                          <a
+                            href={`${BACKEND_URL}/documents/${doc.doc_id}/pdf`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '8px' }}
+                            onClick={() => onOpenMenu(null)}
+                          >
+                            <ExternalLink size={14} />
+                            View PDF
+                          </a>
                           <button
                             type="button"
                             onClick={() => {

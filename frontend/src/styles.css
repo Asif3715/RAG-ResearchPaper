@@ -411,7 +411,8 @@ button:disabled {
   display: grid;
 }
 
-.doc-menu button {
+.doc-menu button,
+.doc-menu a {
   width: 100%;
   justify-content: flex-start;
   background: transparent;
@@ -420,7 +421,8 @@ button:disabled {
   font-size: 13px;
 }
 
-.doc-menu button:hover { background: var(--bg-card); }
+.doc-menu button:hover,
+.doc-menu a:hover { background: var(--bg-card); }
 
 .danger-text { color: var(--error) !important; }
 

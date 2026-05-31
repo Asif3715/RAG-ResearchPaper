@@ -8,7 +8,7 @@ from pathlib import Path
 
 from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from backend.app.dependencies import get_embedding_client, get_groq_generator, get_retrieval_pipeline, get_vector_db
 from backend.app.models import (
@@ -22,6 +22,7 @@ from backend.app.models import (
     SourceItem,
     UploadResponse,
 )
+from backend.app.core.config import UPLOADS_DIR
 from backend.app.services.embeddings.client import normalize_text
 from backend.app.services.indexing.ingest import ingest_parsed_document
 from backend.app.services.indexing.cleanup import delete_all_document_artifacts, delete_document_artifacts
@@ -266,6 +267,14 @@ def document(doc_id: str):
         if item.doc_id == doc_id:
             return item
     raise HTTPException(status_code=404, detail="Document not found")
+
+
+@app.get("/documents/{doc_id}/pdf")
+def document_pdf(doc_id: str):
+    file_path = UPLOADS_DIR / f"{doc_id}.pdf"
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="PDF not found")
+    return FileResponse(file_path, media_type="application/pdf", filename=f"{doc_id}.pdf")
 
 
 @app.patch("/documents/{doc_id}", response_model=DocumentItem)
